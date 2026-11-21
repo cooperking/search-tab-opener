@@ -657,7 +657,7 @@ function directFileUrl(u) {
   }
   return { url: u };
 }
-async function loadFromUrl(raw) {
+async function loadFromUrl(raw, asName = '') {
   raw = raw.trim(); if (!raw) return;
   const { url, name } = directFileUrl(raw);
   const info = $('fileInfo'); info.textContent = 'Loading…';
@@ -666,13 +666,13 @@ async function loadFromUrl(raw) {
     const res = await fetch(abs);
     if (!res.ok) throw new Error(res.status === 404 ? 'File not found (404)' : 'The site answered ' + res.status);
     const blob = await res.blob();
-    let fname = name || decodeURIComponent(abs.pathname.split('/').pop() || '');
+    let fname = asName || name || (abs.protocol === 'data:' ? 'list' : decodeURIComponent(abs.pathname.split('/').pop() || ''));
     if (!/\.(csv|tsv|txt|xlsx|xls|xlsm|ods)$/i.test(fname)) {
       const t = (res.headers.get('content-type') || '').toLowerCase();
       fname = (fname || 'download') + (/sheet|excel|officedocument|octet/.test(t) ? '.xlsx' : '.csv');
     }
     if (/^\s*<(!doctype|html)/i.test(await blob.slice(0, 200).text())) throw new Error('That link opens a web page, not a file. Make sure the file is shared publicly.');
-    $('csvUrl').value = raw;
+    $('csvUrl').value = abs.protocol === 'data:' ? '' : raw;
     readFile(new File([blob], fname), raw);
   } catch (e) {
     const cors = e instanceof TypeError;
@@ -685,6 +685,7 @@ $('loadUrl').onclick = () => loadFromUrl($('csvUrl').value);
 $('csvUrl').addEventListener('keydown', e => { if (e.key === 'Enter') loadFromUrl($('csvUrl').value); });
 
 /* ---------- links that open the site ready to go ---------- */
+let linkName = '';
 const b64 = { enc: s => btoa(unescape(encodeURIComponent(s))), dec: s => decodeURIComponent(escape(atob(s))) };
 function readLinkParams() {
   const p = new URLSearchParams(location.search);
@@ -694,6 +695,7 @@ function readLinkParams() {
   if (p.get('batch')) $('batch').value = p.get('batch');
   if (p.has('reuse')) $('reuse').checked = p.get('reuse') === '1';
   if (p.has('tpl') || p.has('rules')) save();
+  linkName = p.get('name') || '';   // (a name for a list carried in the link itself, as a data: URL)
   return p.get('csv');
 }
 $('copyLink').onclick = async () => {
@@ -701,6 +703,7 @@ $('copyLink').onclick = async () => {
   if (!tpl) { alert('Enter a website in step 2 first.'); return; }
   const p = new URLSearchParams();
   if (csvSource) p.set('csv', csvSource);
+  if (csvSource && linkName) p.set('name', linkName);
   p.set('tpl', tpl);
   if (rules.length) p.set('rules', b64.enc(JSON.stringify(rules)));
   if ($('batch').value && $('batch').value !== '0') p.set('batch', $('batch').value);
@@ -723,7 +726,7 @@ function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<'
 load(); loadData(); loadSaved(); renderSaved();
 const linkCsv = readLinkParams();
 renderRules(); rebuild();
-if (linkCsv) { $('csvUrl').value = linkCsv; loadFromUrl(linkCsv); }
+if (linkCsv) { if (!/^data:/i.test(linkCsv)) $('csvUrl').value = linkCsv; loadFromUrl(linkCsv, linkName); }
 </script>
 </body>
 </html>
