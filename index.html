@@ -695,7 +695,16 @@ $('loadUrl').onclick = () => loadFromUrl($('csvUrl').value);
 $('csvUrl').addEventListener('keydown', e => { if (e.key === 'Enter') loadFromUrl($('csvUrl').value); });
 
 /* ---------- links that open the site ready to go ---------- */
-let linkName = '';
+let linkName = '', linkZ = '';
+async function loadZipped(z, asName) {
+  try {
+    const bin = atob(z.replace(/-/g, '+').replace(/_/g, '/'));
+    const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+    const text = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text();
+    let fname = asName || 'list'; if (!/\.(csv|tsv|txt)$/i.test(fname)) fname += '.csv';
+    $('csvUrl').value = ''; readFile(new File([text], fname), '');
+  } catch (e) { $('fileInfo').innerHTML = `<span style="color:var(--danger)">Couldn't read the list in that link: ${esc(e.message)}</span>`; }
+}
 const b64 = { enc: s => btoa(unescape(encodeURIComponent(s))), dec: s => decodeURIComponent(escape(atob(s))) };
 function readLinkParams() {
   const p = new URLSearchParams(location.search);
@@ -705,7 +714,8 @@ function readLinkParams() {
   if (p.get('batch')) $('batch').value = p.get('batch');
   if (p.has('reuse')) $('reuse').checked = p.get('reuse') === '1';
   if (p.has('tpl') || p.has('rules')) save();
-  linkName = p.get('name') || '';   // (a name for a list carried in the link itself, as a data: URL)
+  linkName = p.get('name') || '';
+  linkZ = p.get('csvz') || '';   // (a list carried in the link, compressed, so a long one fits)   // (a name for a list carried in the link itself, as a data: URL)
   return p.get('csv');
 }
 $('copyLink').onclick = async () => {
@@ -749,8 +759,9 @@ window.addEventListener('message', e => {
 });
 if (window.opener && new URLSearchParams(location.hash.slice(1)).get('from')) {
   HANDOVER.forEach(o => { try { window.opener.postMessage({ type: 'sto-ready' }, o); } catch (e) {} });
-  setTimeout(() => { if (!handed && linkCsv) loadFromUrl(linkCsv, linkName); }, 2000);
-} else if (linkCsv) { if (!/^data:/i.test(linkCsv)) $('csvUrl').value = linkCsv; loadFromUrl(linkCsv, linkName); }
+  setTimeout(() => { if (handed) return; if (linkZ) loadZipped(linkZ, linkName); else if (linkCsv) loadFromUrl(linkCsv, linkName); }, 2000);
+} else if (linkZ) loadZipped(linkZ, linkName);
+else if (linkCsv) { if (!/^data:/i.test(linkCsv)) $('csvUrl').value = linkCsv; loadFromUrl(linkCsv, linkName); }
 </script>
 </body>
 </html>
