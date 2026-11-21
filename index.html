@@ -89,6 +89,7 @@
     <div class="saved" id="savedList"></div>
     <div class="row">
       <div class="shrink"><button id="saveCurrent">Save current setup…</button></div>
+      <div class="shrink"><button id="copyLink" title="A link that opens this site with your website, rules and (if loaded from a link) the CSV already set up">Copy link to this setup</button></div>
       <div class="shrink"><button id="exportSaved" title="Download your saved searches as a file, to move them to another device">Export</button></div>
       <div class="shrink"><button id="importSaved" title="Load saved searches from an exported file">Import</button></div>
       <input type="file" id="importSavedFile" accept=".json,application/json" hidden>
@@ -100,6 +101,11 @@
     <h2><span class="n">1</span> Import a spreadsheet or CSV</h2>
     <div class="drop" id="drop">Drop a .csv, .xlsx or .xls file here, or click to choose one
       <input type="file" id="file" accept=".csv,.tsv,.txt,.xlsx,.xls,.xlsm,.ods" hidden>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div><label for="csvUrl">Or load from a link: Google Sheets, GitHub, Dropbox, or any public CSV or Excel file</label>
+        <input type="text" id="csvUrl" placeholder="https://docs.google.com/spreadsheets/d/…" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
+      <div class="shrink"><button id="loadUrl">Load</button></div>
     </div>
     <div class="row" style="margin-top:10px">
       <div id="sheetBox" class="hidden"><label>Sheet</label><select id="sheet"></select></div>
@@ -182,6 +188,7 @@ const STORE = 'searchTabOpener.v1';
 let workbook = null, headers = [], rows = [], items = [], cursor = 0;
 let rules = [];
 let openedUrls = new Set();
+let csvSource = '';
 const DATA = 'searchTabOpener.data.v1';
 let lastFocusedInput = $('tpl');
 
@@ -210,7 +217,7 @@ function save() {
 }
 function saveData() {
   try {
-    localStorage.setItem(DATA, JSON.stringify({ headers, rows, name: $('fileInfo').dataset.name || '', opened: [...openedUrls] }));
+    localStorage.setItem(DATA, JSON.stringify({ headers, rows, name: $('fileInfo').dataset.name || '', csv: csvSource, opened: [...openedUrls] }));
   } catch (e) {
     try { localStorage.setItem(DATA, JSON.stringify({ opened: [...openedUrls] })); } catch (e2) {}
   }
@@ -221,7 +228,8 @@ function loadData() {
     if (!d) return;
     openedUrls = new Set(d.opened || []);
     if (Array.isArray(d.headers) && Array.isArray(d.rows) && d.rows.length) {
-      headers = d.headers; rows = d.rows;
+      headers = d.headers; rows = d.rows; csvSource = d.csv || '';
+      if (csvSource) $('csvUrl').value = csvSource;
       $('fileInfo').dataset.name = d.name || 'Previous file';
       $('fileInfo').textContent = `${d.name || 'Previous file'}: ${rows.length} rows, ${headers.length} columns (restored)`;
       renderChips();
@@ -247,7 +255,7 @@ drop.ondragleave = () => drop.classList.remove('over');
 drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) readFile(e.dataTransfer.files[0]); };
 $('file').onchange = e => { if (e.target.files[0]) readFile(e.target.files[0]); };
 
-function readFile(file) {
+function readFile(file, sourceUrl = '') {
   if (typeof XLSX === 'undefined') { alert('The spreadsheet reader could not load. Check your internet connection and reload the page.'); return; }
   const reader = new FileReader();
   const isText = /\.(csv|tsv|txt)$/i.test(file.name);
@@ -260,7 +268,10 @@ function readFile(file) {
     sel.innerHTML = workbook.SheetNames.map(n => `<option>${esc(n)}</option>`).join('');
     $('sheetBox').classList.toggle('hidden', workbook.SheetNames.length < 2);
     $('fileInfo').dataset.name = file.name;
-    openedUrls = new Set();
+    // Same link as before (e.g. Safari reloaded the page): keep progress
+    if (!sourceUrl || sourceUrl !== csvSource) openedUrls = new Set();
+    csvSource = sourceUrl;
+    if (!sourceUrl) $('csvUrl').value = '';
     loadSheet();
   };
   isText ? reader.readAsText(file) : reader.readAsArrayBuffer(file);
@@ -631,6 +642,77 @@ $('importSavedFile').onchange = e => {
   }).catch(err => alert('Could not read that file: ' + err.message)).finally(() => { e.target.value = ''; });
 };
 
+/* ---------- load a CSV from a link ---------- */
+function directFileUrl(u) {
+  let m = u.match(/docs\.google\.com\/spreadsheets\/d\/([\w-]+)/);
+  if (m && !/\/pub(html)?\b|output=csv|format=csv|tqx=out:csv/.test(u)) {
+    const gid = (u.match(/[#&?]gid=(\d+)/) || [])[1];
+    return { url: `https://docs.google.com/spreadsheets/d/${m[1]}/gviz/tq?tqx=out:csv${gid ? '&gid=' + gid : ''}`, name: 'Google Sheet.csv' };
+  }
+  if (m) return { url: u.replace(/output=(html|xlsx|ods|tsv)/, 'output=csv').replace('/pubhtml', '/pub?output=csv'), name: 'Google Sheet.csv' };
+  m = u.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/(?:blob|raw)\/(.+)$/);
+  if (m) return { url: `https://raw.githubusercontent.com/${m[1]}/${m[2]}/${m[3]}` };
+  if (/^https:\/\/(www\.)?dropbox\.com\//.test(u)) {
+    const x = new URL(u); x.hostname = 'dl.dropboxusercontent.com'; x.searchParams.delete('dl'); return { url: x.toString() };
+  }
+  return { url: u };
+}
+async function loadFromUrl(raw) {
+  raw = raw.trim(); if (!raw) return;
+  const { url, name } = directFileUrl(raw);
+  const info = $('fileInfo'); info.textContent = 'Loading…';
+  try {
+    const abs = new URL(url, location.href);
+    const res = await fetch(abs);
+    if (!res.ok) throw new Error(res.status === 404 ? 'File not found (404)' : 'The site answered ' + res.status);
+    const blob = await res.blob();
+    let fname = name || decodeURIComponent(abs.pathname.split('/').pop() || '');
+    if (!/\.(csv|tsv|txt|xlsx|xls|xlsm|ods)$/i.test(fname)) {
+      const t = (res.headers.get('content-type') || '').toLowerCase();
+      fname = (fname || 'download') + (/sheet|excel|officedocument|octet/.test(t) ? '.xlsx' : '.csv');
+    }
+    if (/^\s*<(!doctype|html)/i.test(await blob.slice(0, 200).text())) throw new Error('That link opens a web page, not a file. Make sure the file is shared publicly.');
+    $('csvUrl').value = raw;
+    readFile(new File([blob], fname), raw);
+  } catch (e) {
+    const cors = e instanceof TypeError;
+    info.innerHTML = `<span style="color:var(--danger)">Couldn't load that link. ${cors
+      ? 'The file has to be public, and the site it’s on has to allow other websites to read it (Google Sheets, GitHub and Dropbox do). Otherwise download the file and import it above.'
+      : esc(e.message)}</span>`;
+  }
+}
+$('loadUrl').onclick = () => loadFromUrl($('csvUrl').value);
+$('csvUrl').addEventListener('keydown', e => { if (e.key === 'Enter') loadFromUrl($('csvUrl').value); });
+
+/* ---------- links that open the site ready to go ---------- */
+const b64 = { enc: s => btoa(unescape(encodeURIComponent(s))), dec: s => decodeURIComponent(escape(atob(s))) };
+function readLinkParams() {
+  const p = new URLSearchParams(location.search);
+  new URLSearchParams(location.hash.slice(1)).forEach((v, k) => p.set(k, v));
+  if (p.get('tpl')) $('tpl').value = p.get('tpl');
+  if (p.get('rules')) { try { rules = JSON.parse(b64.dec(p.get('rules'))).map(r => newRule(r)); } catch (e) {} }
+  if (p.get('batch')) $('batch').value = p.get('batch');
+  if (p.has('reuse')) $('reuse').checked = p.get('reuse') === '1';
+  if (p.has('tpl') || p.has('rules')) save();
+  return p.get('csv');
+}
+$('copyLink').onclick = async () => {
+  const tpl = $('tpl').value.trim();
+  if (!tpl) { alert('Enter a website in step 2 first.'); return; }
+  const p = new URLSearchParams();
+  if (csvSource) p.set('csv', csvSource);
+  p.set('tpl', tpl);
+  if (rules.length) p.set('rules', b64.enc(JSON.stringify(rules)));
+  if ($('batch').value && $('batch').value !== '0') p.set('batch', $('batch').value);
+  if ($('reuse').checked) p.set('reuse', '1');
+  const link = location.origin + location.pathname + '#' + p.toString();
+  try { await navigator.clipboard.writeText(link); }
+  catch (e) { prompt('Copy this link:', link); return; }
+  const b = $('copyLink'), old = b.textContent;
+  b.textContent = csvSource ? 'Link copied ✓' : 'Link copied ✓ (no CSV: import one from a link to include it)';
+  setTimeout(() => b.textContent = old, 2500);
+};
+
 /* ---------- wiring ---------- */
 ['tpl'].forEach(id => $(id).addEventListener('input', () => { save(); rebuild(); }));
 ['plusSpaces', 'noEncode', 'skipBlank', 'dedupe'].forEach(id => $(id).addEventListener('change', () => { save(); rebuild(); }));
@@ -638,7 +720,10 @@ $('batch').addEventListener('input', () => { save(); updateBar(); });
 $('reuse').addEventListener('change', () => { save(); updateBar(); });
 function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
-load(); loadData(); loadSaved(); renderSaved(); renderRules(); rebuild();
+load(); loadData(); loadSaved(); renderSaved();
+const linkCsv = readLinkParams();
+renderRules(); rebuild();
+if (linkCsv) { $('csvUrl').value = linkCsv; loadFromUrl(linkCsv); }
 </script>
 </body>
 </html>
