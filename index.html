@@ -659,6 +659,16 @@ function directFileUrl(u) {
 }
 async function loadFromUrl(raw, asName = '') {
   raw = raw.trim(); if (!raw) return;
+  // A list carried in the link itself (data:...): read here, not fetched, which some browsers refuse
+  const dm = /^data:([^,]*?)(;base64)?,(.*)$/is.exec(raw);
+  if (dm) {
+    try {
+      const body = dm[2] ? Uint8Array.from(atob(decodeURIComponent(dm[3])), c => c.charCodeAt(0)) : new TextEncoder().encode(decodeURIComponent(dm[3]));
+      let fname = asName || 'list'; if (!/\.(csv|tsv|txt)$/i.test(fname)) fname += '.csv';
+      $('csvUrl').value = ''; readFile(new File([body], fname), raw);
+    } catch (e) { $('fileInfo').innerHTML = `<span style="color:var(--danger)">Couldn't read the list in that link: ${esc(e.message)}</span>`; }
+    return;
+  }
   const { url, name } = directFileUrl(raw);
   const info = $('fileInfo'); info.textContent = 'Loading…';
   try {
@@ -726,7 +736,21 @@ function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<'
 load(); loadData(); loadSaved(); renderSaved();
 const linkCsv = readLinkParams();
 renderRules(); rebuild();
-if (linkCsv) { if (!/^data:/i.test(linkCsv)) $('csvUrl').value = linkCsv; loadFromUrl(linkCsv, linkName); }
+/* A list handed over by the page that opened this one (Grifflix admin): it says it's ready, and the list comes back as text, however long.
+   Only from pages allowed to; the list in the link is used if nothing comes within two seconds. */
+const HANDOVER = ['https://grifflix.co.uk', 'https://www.grifflix.co.uk', 'https://admin.grifflix.co.uk', 'https://cooperking.github.io'];
+let handed = false;
+window.addEventListener('message', e => {
+  if (!HANDOVER.includes(e.origin) || !e.data || e.data.type !== 'sto-csv' || typeof e.data.csv !== 'string') return;
+  handed = true;
+  let fname = String(e.data.name || 'list').slice(0, 120); if (!/\.(csv|tsv|txt)$/i.test(fname)) fname += '.csv';
+  linkName = fname.replace(/\.csv$/i, '');
+  $('csvUrl').value = ''; readFile(new File([e.data.csv], fname), '');
+});
+if (window.opener && new URLSearchParams(location.hash.slice(1)).get('from')) {
+  HANDOVER.forEach(o => { try { window.opener.postMessage({ type: 'sto-ready' }, o); } catch (e) {} });
+  setTimeout(() => { if (!handed && linkCsv) loadFromUrl(linkCsv, linkName); }, 2000);
+} else if (linkCsv) { if (!/^data:/i.test(linkCsv)) $('csvUrl').value = linkCsv; loadFromUrl(linkCsv, linkName); }
 </script>
 </body>
 </html>
