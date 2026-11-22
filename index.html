@@ -497,11 +497,20 @@ function updateBar() {
   $('reset').classList.toggle('hidden', !done);
   $('copyAll').classList.toggle('hidden', !total);
 }
+// A big batch is confirmed by a second click on Go itself, not a confirm() box: once a box is answered, Safari and Chrome no
+// longer count the click as the person's, so every tab after it was blocked and nothing opened.
+let goArmed = 0;
 $('go').onclick = () => {
   const list = pending();
   const batch = batchSize();
   const todo = batch ? list.slice(0, batch) : list;
-  if (todo.length > 25 && !batch && !confirm(`Open ${todo.length} tabs at once?`)) return;
+  if (todo.length > 25 && !batch && Date.now() - goArmed > 8000) {
+    goArmed = Date.now();
+    $('go').textContent = `Click again to open ${todo.length} tabs`;
+    setTimeout(() => { if (goArmed && Date.now() - goArmed >= 8000) { goArmed = 0; renderTable(); } }, 8100);
+    return;
+  }
+  goArmed = 0;
   autoSaveSetup();
   let blocked = false;
   todo.forEach((it, n) => {
@@ -510,7 +519,7 @@ $('go').onclick = () => {
     const w = window.open(it.url, target);
     try { if (w && target !== '_blank') w.focus(); } catch (e) {}
     // iPhone Safari can return null even when the tab did open, so the first tab of each tap always counts
-    if (!w && n > 0) { blocked = true; return; }
+    if (!w && (n > 0 || !IS_IOS)) { blocked = true; return; }   // (elsewhere, a first tab that didn't open isn't counted as opened)
     try { if (w) w.opener = null; } catch (e) {}
     it.opened = true; openedUrls.add(it.url);
   });
