@@ -178,7 +178,8 @@
     To open several per tap, go to Settings › Apps › Safari, turn off <b>Block Pop-ups</b>, and set "Tabs per click" higher.
   </div>
   <div class="warn hidden" id="popupWarn">
-    Your browser blocked some tabs. Click the popup-blocked icon in the address bar, choose <b>Always allow pop-ups</b> for this page, then click <b>Go</b> again. It continues from where it stopped.
+    <span id="popupHow">Your browser blocked some tabs. Click the popup-blocked icon in the address bar, choose <b>Always allow pop-ups</b> for this page, then click <b>Go</b> again.</span>
+    It carries on from where it stopped.
   </div>
 </main>
 
@@ -478,6 +479,15 @@ $('allBox').onchange = e => { items.forEach(i => i.on = e.target.checked); rende
 /* ---------- go ---------- */
 const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 if (IS_IOS) $('iosNote').classList.remove('hidden');
+// (the blocked-tabs note in the words of the browser it's in: one tab a click was all that opened, with no word why: 22 Nov 2026)
+(() => {
+  const ua = navigator.userAgent, safari = /Safari/.test(ua) && !/Chrome|Chromium|CriOS|Edg|Firefox|FxiOS/.test(ua);
+  const how = IS_IOS ? 'Only one tab opens a tap until pop-ups are allowed: on the iPhone or iPad, open <b>Settings › Apps › Safari</b>, turn off <b>Block Pop-ups</b>, come back, set <b>Tabs per click</b> to 0 (all), and tap <b>Go</b> again.'
+    : safari ? 'Safari blocked the other tabs. In the menu bar choose <b>Safari › Settings for cooperking.github.io…</b> (or Settings › Websites › Pop-up Windows), set <b>Pop-up Windows</b> to <b>Allow</b>, then click <b>Go</b> again.'
+    : /Firefox/.test(ua) ? 'Firefox blocked the other tabs. Click <b>Options</b> in the yellow bar at the top, choose <b>Allow pop-ups for cooperking.github.io</b>, then click <b>Go</b> again.'
+    : 'Your browser blocked the other tabs. Click the blocked pop-up icon at the right of the address bar, choose <b>Always allow pop-ups</b> for this page, then click <b>Go</b> again.';
+  $('popupHow').innerHTML = how;
+})();
 function batchSize() {
   const b = Math.max(0, parseInt($('batch').value) || 0);
   return b || (IS_IOS ? 1 : 0);   // iPhone: one tab per tap unless the user sets more
@@ -524,7 +534,7 @@ $('go').onclick = () => {
     it.opened = true; openedUrls.add(it.url);
   });
   saveData();
-  $('popupWarn').classList.toggle('hidden', !blocked || IS_IOS);
+  $('popupWarn').classList.toggle('hidden', !(blocked || (IS_IOS && todo.length === 1 && pending().length)));   // (on an iPhone, after a tap that opened one of several)
   renderTable();
 };
 $('copyAll').onclick = async () => {
